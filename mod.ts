@@ -16,8 +16,16 @@ type Resolver = (
 	importer: Location,
 ) => MaybePromise<string | void>
 
+interface JSXOptions {
+	runtime: 'classic' | 'automatic'
+	importSource?: Location
+	pragma?: string
+	fragmentPragma?: string
+}
+
 interface Options {
 	customResolvers?: Resolver[]
+	jsx?: JSXOptions
 	outputFormat?: 'iife'
 	resolveDirectory?: Location
 }
@@ -29,6 +37,7 @@ class Module {
 	importer!: Location
 	customResolvers!: Resolver[]
 	dependencyCache!: DependencyCache
+	jsxOptions!: JSXOptions
 	absoluteFilepath!: URL
 	content!: string
 	ast!: any
@@ -39,6 +48,7 @@ class Module {
 		importer: Location,
 		customResolvers: Resolver[] = [],
 		dependencyCache: DependencyCache,
+		jsxOptions: JSXOptions,
 	) {
 		return (async () => {
 			if (dependencyCache.has(locationToString(filepath))) {
@@ -49,6 +59,7 @@ class Module {
 			this.importer = importer
 			this.customResolvers = customResolvers
 			this.dependencyCache = dependencyCache
+			this.jsxOptions = jsxOptions
 			this.absoluteFilepath = new URL(filepath, importer)
 
 			this.content = await this.handleRequest(
@@ -57,7 +68,28 @@ class Module {
 			)
 
 			this.ast = fromJs(
-				this.content,
+				swc.transform(this.content, {
+					jsc: {
+						parser: { syntax: 'typescript', tsx: true },
+						target: 'es2022',
+
+						transform: {
+							react: {
+								runtime: this.jsxOptions.runtime,
+
+								importSource:
+									this.jsxOptions.runtime === 'automatic'
+										? locationToString(
+												jsxOptions.importSource!,
+										  )
+										: undefined,
+
+								pragma: this.jsxOptions.pragma,
+								pragmaFrag: this.jsxOptions.fragmentPragma,
+							},
+						},
+					},
+				}).code,
 
 				{
 					module: true,
@@ -91,6 +123,7 @@ class Module {
 							this.absoluteFilepath,
 							this.customResolvers,
 							this.dependencyCache,
+							this.jsxOptions,
 						),
 				),
 		)
@@ -258,6 +291,7 @@ async function createDependencyGraph(
 	filepath: Location,
 	importer: Location,
 	customResolvers: Resolver[] = [],
+	jsxOptions: JSXOptions,
 ) {
 	const dependencyCache: DependencyCache = new Map()
 
@@ -266,6 +300,7 @@ async function createDependencyGraph(
 		importer,
 		customResolvers,
 		dependencyCache,
+		jsxOptions,
 	)
 
 	return rootModule
@@ -305,6 +340,13 @@ export async function pack(
 
 	{
 		customResolvers = [],
+
+		jsx = {
+			runtime: 'classic',
+			pragma: 'h',
+			fragmentPragma: 'Fragment',
+		},
+
 		resolveDirectory = ErrorStackParser.parse(new Error())[1].fileName,
 	}: Options = {},
 ) {
@@ -312,6 +354,7 @@ export async function pack(
 		filepath,
 		resolveDirectory,
 		customResolvers,
+		jsx,
 	)
 
 	const { absoluteFilepath } = graph
